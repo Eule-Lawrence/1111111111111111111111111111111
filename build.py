@@ -15,7 +15,17 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 
+def _force_utf8() -> None:
+    """CI / 老控制台可能是 cp1252，中文 print 会直接崩，这里统一成 UTF-8。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+
 def main() -> int:
+    _force_utf8()
     if sys.platform == "darwin":
         from build_mac import main as mac_main
 

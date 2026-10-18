@@ -12,6 +12,11 @@ on:
     tags:
       - "v*"
 
+env:
+  # Windows runner 的默认控制台是 cp1252，中文 print 会直接 UnicodeEncodeError
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -41,11 +46,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14   # Apple 芯片
+          - runner: macos-14        # Apple 芯片
             arch: arm64
-          - runner: macos-13   # Intel
+            optional: false
+          - runner: macos-15-intel  # Intel（排队比较慢，失败也不影响其他包）
             arch: x86_64
+            optional: true
     runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.optional }}
     steps:
       - uses: actions/checkout@v4
 

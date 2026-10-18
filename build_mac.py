@@ -168,7 +168,17 @@ def build_args(icon: Path | None, universal: bool = False) -> list[str]:
     return args
 
 
+def _force_utf8() -> None:
+    """CI / 老控制台可能是 cp1252，中文 print 会直接崩，这里统一成 UTF-8。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+
 def main() -> int:
+    _force_utf8()
     if sys.platform != "darwin":
         print("这是 macOS 打包脚本，必须在 Mac 上运行。")
         return 1

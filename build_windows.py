@@ -75,7 +75,17 @@ ARGS = [
 ]
 
 
+def _force_utf8() -> None:
+    """CI / 老控制台可能是 cp1252，中文 print 会直接崩，这里统一成 UTF-8。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except Exception:
+            pass
+
+
 def main() -> int:
+    _force_utf8()
     if sys.platform != "win32":
         print("这是 Windows 打包脚本；macOS 请运行 build_mac.py")
         return 1

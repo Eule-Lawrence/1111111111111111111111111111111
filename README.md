@@ -16,6 +16,23 @@
 
 ---
 
+## 下载
+
+不用装 Python，直接下打包好的版本：
+
+**[⬇️ 前往 Releases 下载](https://github.com/Eule-Lawrence/1111111111111111111111111111111/releases/latest)**
+
+| 系统 | 文件 | 说明 |
+|---|---|---|
+| Windows 10/11（64 位） | `大肥鱼.exe` | 双击运行；首次可能被 SmartScreen 拦，点「更多信息 → 仍要运行」 |
+| macOS（Apple 芯片 M1~M4） | `大肥鱼-macos-arm64.zip` | 解压后右键「打开」 |
+| macOS（Intel） | `大肥鱼-macos-x86_64.zip` | 同上；没有这个文件就说明 Intel 版没构建出来，用源码跑 |
+
+配置、日志、去重记录都存在本机（Windows 在 `%APPDATA%\BiliFish`，macOS 在
+`~/Library/Application Support/BiliFish`），不会跟着安装包走。
+
+---
+
 ## 界面
 
 **主界面**：头部是浅蓝水面 + 圆形头像，窗口够宽（≥1150px）时右侧会多一块立绘面板。
