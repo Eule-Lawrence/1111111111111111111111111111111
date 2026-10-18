@@ -1,0 +1,10 @@
+# 统一换行，避免 Windows 检出后 CRLF 把仓库搞乱
+* text=auto eol=lf
+
+# 二进制资源，别动
+*.ico binary
+*.icns binary
+*.png binary
+*.jpg binary
+*.exe binary
+*.zip binary
