@@ -86,19 +86,26 @@ class Runner:
         log.info("=" * 60)
         log.info("启动：%s", started)
         log.info(
-            "模式：%s | 每日上限 %d | 每轮视频 %d（来源：%s）| 延迟 %d~%d 秒",
+            "模式：%s | 每日上限 %d | 每轮视频 %d（来源：%s）| 延迟 %d~%d 秒 | 循环：%s",
             "演练（不发送）" if self.cfg.dry_run else "正式",
             self.cfg.daily_limit,
             self.cfg.videos_per_round,
             SOURCE_NAMES.get(self.cfg.video_source, self.cfg.video_source),
             self.cfg.delay_min,
             self.cfg.delay_max,
+            f"开（每 {self.cfg.loop_interval_min} 分钟一轮）" if self.cfg.loop_enabled else "关（跑完一轮就停）",
         )
         try:
             await self._prepare()
             while not self.stopping:
                 await self._one_round()
-                if self.stopping or not self.cfg.loop_enabled:
+                if self.stopping:
+                    break
+                if not self.cfg.loop_enabled:
+                    log.warning(
+                        "⚠️ 没有勾选「循环运行」，本轮结束后程序就停了。"
+                        "想让它一直守着（回消息、刷视频），请勾上「循环运行」再点开始。"
+                    )
                     break
                 minutes = max(1, int(self.cfg.loop_interval_min))
                 log.info("本轮结束，休息 %d 分钟后开始下一轮（点「停止」可随时中断）", minutes)
@@ -141,6 +148,55 @@ class Runner:
                 log.info("主人：%s（UID %s），有人问起时会 @ 他", name, self.cfg.master_uid)
 
         self._status("运行中")
+
+    # ------------------------------------------------------------------
+    async def comment_single(self, bvid: str) -> tuple[bool, str]:
+        """一键评论：给指定 BV 生成并发送一条评论。
+
+        返回 (是否成功, 给用户看的文字)。失败时抛出 ApiException 由界面显示原因。
+        """
+        if self.store.is_commented(bvid):
+            return False, "这条视频之前已经评论过了（去重记录里有它）"
+        if self.store.today_count() >= self.cfg.daily_limit:
+            return False, f"今日额度已用完（{self.store.today_count()}/{self.cfg.daily_limit}）"
+
+        info = await self.bili.get_video_info(bvid)
+        if not info.aid:
+            return False, "拿不到这条视频的 aid，可能已经失效或需要登录"
+
+        hot: list[str] = []
+        subtitle = ""
+        if self.cfg.use_hot_comments:
+            try:
+                hot = await self.bili.get_top_comments(info.aid, limit=5)
+            except Exception as exc:
+                log.warning("拉取热评失败：%s", exc)
+        if self.cfg.use_subtitle:
+            try:
+                subtitle = await self.bili.get_subtitle_text(info.bvid, info.aid, info.cid)
+            except Exception as exc:
+                log.debug("拉取字幕失败：%s", exc)
+
+        text = await self.llm.make_comment(info, hot_comments=hot, subtitle=subtitle)
+        log.info(
+            "一键评论｜%s｜%s（参考：热评 %d 条、字幕 %d 字）→ %s",
+            info.bvid,
+            info.title[:30],
+            len(hot),
+            len(subtitle),
+            text,
+        )
+
+        if self.cfg.dry_run:
+            return True, f"演练模式，没有真的发送。生成的评论：\n\n{text}"
+
+        await self.bili.post_comment(info, text)
+        self.store.mark_commented(info.bvid, info.aid, text)
+        self.store.add_count()
+        self.store.save()
+        log.info("✅ 一键评论完成 %s，今日 %d/%d", info.bvid, self.store.today_count(), self.cfg.daily_limit)
+        self._status("运行中")
+        return True, text
 
     async def _one_round(self) -> None:
         if self.store.today_count() >= self.cfg.daily_limit:

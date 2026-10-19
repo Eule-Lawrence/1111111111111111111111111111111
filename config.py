@@ -17,7 +17,7 @@ from typing import Any
 
 APP_NAME = "BiliFish"
 APP_TITLE = "大肥鱼 · B站 AI 自动评论"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 # ---------------------------------------------------------------------------
 # 默认提示词（界面上可以改，改完保存在 config.json 里）
@@ -136,7 +136,8 @@ class Config:
     # ---- 行为与风控 ----
     daily_limit: int = 20           # 每日最多发多少条（评论 + 回复共用）
     videos_per_round: int = 15      # 每轮最多看多少个推荐视频
-    video_source: str = "recommend"  # recommend / popular / rank / mix
+    video_source: str = "recommend"  # recommend / popular / rank / search / mix
+    search_keyword: str = ""        # 视频来源=搜索时用的关键词；空 = 退回首页推荐
     max_replies_per_round: int = 5  # 每轮最多回多少条消息
     reply_max_age_days: int = 3     # 只回复最近几天的消息，0 = 不限
     use_hot_comments: bool = True   # 生成评论前参考这个视频的热评
@@ -146,7 +147,7 @@ class Config:
     comment_enabled: bool = True
     reply_enabled: bool = True
     dry_run: bool = False           # 只生成不发送（演练模式）
-    loop_enabled: bool = False      # 常驻循环
+    loop_enabled: bool = True       # 常驻循环（关掉就只跑一轮）
     loop_interval_min: int = 30     # 两轮之间休息多少分钟
 
     # ------------------------------------------------------------------
@@ -206,8 +207,10 @@ class Config:
             errors.append("每轮视频数要在 1 ~ 50 之间")
         if not 1 <= self.max_replies_per_round <= 50:
             errors.append("每轮回复数要在 1 ~ 50 之间")
-        if self.video_source not in ("recommend", "popular", "rank", "mix"):
-            errors.append("视频来源只能是：首页推荐 / 热门榜 / 排行榜 / 混合")
+        if self.video_source not in ("recommend", "popular", "rank", "search", "mix"):
+            errors.append("视频来源只能是：首页推荐 / 热门榜 / 排行榜 / 搜索 / 混合")
+        if len(self.search_keyword.strip()) > 40:
+            errors.append("搜索关键词最多 40 个字")
         if not 0 <= self.reply_max_age_days <= 30:
             errors.append("回复时效要在 0 ~ 30 天之间")
         if not 0 <= self.delay_min <= 600 or not 0 <= self.delay_max <= 600:

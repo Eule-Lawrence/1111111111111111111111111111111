@@ -19,8 +19,9 @@ from typing import Any, Optional
 
 import httpx
 
-from bilibili_api import comment, homepage, hot, rank, session, user, video
+from bilibili_api import comment, homepage, hot, rank, search, user, video
 from bilibili_api.comment import CommentResourceType, OrderType
+from bilibili_api.exceptions import NetworkException, ResponseCodeException
 from bilibili_api.utils.network import Api, Credential
 from bilibili_api.utils.utils import get_api
 
@@ -31,6 +32,13 @@ log = logging.getLogger(__name__)
 
 BV_RE = re.compile(r"BV[0-9A-Za-z]{10}")
 
+# 消息中心（回复我的 / @我的）。bilibili-api 的 session.get_replies() 会传 id=None，
+# 实测返回空 data，所以这里自己发请求，参数只用 build / mobi_app / platform。
+INBOX_URLS = {
+    "at": "https://api.bilibili.com/x/msgfeed/at",
+    "reply": "https://api.bilibili.com/x/msgfeed/reply",
+}
+
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -40,6 +48,7 @@ SOURCE_NAMES = {
     "recommend": "首页推荐",
     "popular": "热门榜",
     "rank": "排行榜",
+    "search": "搜索关键词",
     "mix": "混合",
 }
 
@@ -164,14 +173,56 @@ class BiliClient:
     async def get_videos(self, limit: int = 15) -> list[VideoInfo]:
         """按配置的来源取一批视频（顺序已经在内部打乱）。"""
         source = (self.cfg.video_source or "recommend").lower()
+        keyword = (getattr(self.cfg, "search_keyword", "") or "").strip()
+
         if source == "mix":
-            source = random.choice(["recommend", "popular", "rank"])
+            pool = ["recommend", "popular", "rank"]
+            if keyword:
+                pool.append("search")
+            source = random.choice(pool)
             log.info("混合来源，本轮抽到：%s", SOURCE_NAMES.get(source, source))
+        if source == "search":
+            return await self.get_search(keyword, limit)
         if source == "popular":
             return await self.get_popular(limit)
         if source == "rank":
             return await self.get_rank(limit)
         return await self.get_recommend(limit)
+
+    async def get_search(self, keyword: str, limit: int = 15) -> list[VideoInfo]:
+        """按关键词搜索视频；关键词为空就退回首页推荐（默认行为）。"""
+        keyword = (keyword or "").strip()
+        if not keyword:
+            log.warning("没有填搜索关键词，自动退回「首页推荐」")
+            return await self.get_recommend(limit)
+
+        data = await search.search_by_type(
+            keyword, search_type=search.SearchObjectType.VIDEO, page=1
+        )
+        items = (data or {}).get("result") or []
+        out: list[VideoInfo] = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            bvid = str(it.get("bvid") or "")
+            if not BV_RE.fullmatch(bvid):
+                continue
+            out.append(
+                VideoInfo(
+                    bvid=bvid,
+                    aid=_to_int(it.get("aid")),
+                    title=_clean_text_html(str(it.get("title") or "")),
+                    desc=_clean_text_html(str(it.get("description") or it.get("desc") or "")),
+                    up_name=str(it.get("author") or ""),
+                    up_mid=_to_int(it.get("mid")),
+                    duration=_parse_duration(it.get("duration")),
+                    view=_to_int(it.get("play")),
+                    pubdate=_to_int(it.get("pubdate")),
+                )
+            )
+        random.shuffle(out)
+        log.info("搜索「%s」拿到 %d 条结果", keyword, len(out))
+        return out[:limit]
 
     async def get_recommend(self, limit: int = 15) -> list[VideoInfo]:
         data = await homepage.get_videos(self.credential)
@@ -388,10 +439,9 @@ class BiliClient:
 
     async def fetch_inbox(self) -> list[InboxItem]:
         out: list[InboxItem] = []
-        sources = (("at", session.get_at), ("reply", session.get_replies))
-        for kind, fn in sources:
+        for kind in ("at", "reply"):
             try:
-                data = await fn(self.credential)
+                data = await self._fetch_feed(kind)
             except Exception as exc:  # 单个来源失败不影响另一个；风控要往上报
                 if is_risk(exc):
                     raise
@@ -399,6 +449,26 @@ class BiliClient:
                 continue
             out.extend(self._parse_msgfeed(kind, data))
         return out
+
+    async def _fetch_feed(self, kind: str) -> dict:
+        """直接打消息中心接口（库里的封装会传坏参数，返回空）。"""
+        cookies = {k: v for k, v in self.credential.get_cookies().items() if v}
+        async with httpx.AsyncClient(
+            timeout=20.0,
+            headers={"User-Agent": UA, "Referer": "https://www.bilibili.com/"},
+        ) as client:
+            resp = await client.get(
+                INBOX_URLS[kind],
+                params={"build": 0, "mobi_app": "web", "platform": "web"},
+                cookies=cookies,
+            )
+        if resp.status_code != 200:
+            raise NetworkException(resp.status_code, resp.text[:200])
+        payload = resp.json()
+        code = int(payload.get("code") or 0)
+        if code != 0:
+            raise ResponseCodeException(code, str(payload.get("message") or ""), payload)
+        return payload
 
     def _parse_msgfeed(self, kind: str, data: Any) -> list[InboxItem]:
         items = ((data or {}).get("data") or {}).get("items") or []
@@ -464,6 +534,29 @@ class BiliClient:
 def _find_bvid(text: str) -> str:
     m = BV_RE.search(text or "")
     return m.group(0) if m else ""
+
+
+def _clean_text_html(text: str) -> str:
+    """搜索结果标题里带 <em class="keyword"> 高亮，去掉标签并还原实体。"""
+    import html as _html
+
+    return _html.unescape(re.sub(r"<[^>]+>", "", text or "")).strip()
+
+
+def _parse_duration(value: Any) -> int:
+    """把 "18:02" / "1:02:03" 这种时长转成秒。"""
+    raw = str(value or "").strip()
+    if not raw:
+        return 0
+    parts = raw.split(":")
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return 0
+    seconds = 0
+    for n in nums:
+        seconds = seconds * 60 + n
+    return seconds
 
 
 def _to_int(value: Any, default: int = 0) -> int:

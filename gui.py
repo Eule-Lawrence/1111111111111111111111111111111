@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import queue
+import re
 import sys
 import threading
 import time
@@ -44,6 +45,7 @@ SOURCE_LABELS = {
     "recommend": "首页推荐（跟你的口味）",
     "popular": "热门榜（全站热门）",
     "rank": "排行榜（三天榜）",
+    "search": "搜索关键词",
     "mix": "混合（每轮换一个）",
 }
 LABEL_SOURCES = {v: k for k, v in SOURCE_LABELS.items()}
@@ -58,7 +60,7 @@ class Scrollable(ttk.Frame):
         super().__init__(master)
         self.canvas = tk.Canvas(self, highlightthickness=0, borderwidth=0)
         vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.body = ttk.Frame(self.canvas, padding=14)
+        self.body = ttk.Frame(self.canvas, padding=10)
         self._win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
         self.canvas.configure(yscrollcommand=vsb.set)
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -427,7 +429,7 @@ class App(tk.Tk):
         cols.columnconfigure(0, weight=1, uniform="col")
         cols.columnconfigure(1, weight=1, uniform="col")
 
-        box = ttk.LabelFrame(cols, text=" B站账号（扫码即可） ", padding=10)
+        box = ttk.LabelFrame(cols, text=" B站账号（扫码即可） ", padding=8)
         box.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         box.columnconfigure(1, weight=1)
 
@@ -480,7 +482,7 @@ class App(tk.Tk):
         )
 
         # ---------------- DeepSeek ----------------
-        box2 = ttk.LabelFrame(cols, text=" DeepSeek ", padding=10)
+        box2 = ttk.LabelFrame(cols, text=" DeepSeek ", padding=8)
         box2.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         box2.columnconfigure(1, weight=1)
 
@@ -510,9 +512,25 @@ class App(tk.Tk):
         ttk.Entry(sub, textvariable=var("max_tokens"), width=8).pack(side="left", padx=(16, 0))
         ttk.Label(sub, text="  tokens").pack(side="left")
 
+        # ---------------- 一键评论（放右栏，省纵向空间） ----------------
+        box1 = ttk.LabelFrame(cols, text=" 一键评论（输入 BV 号立刻评） ", padding=8)
+        box1.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=(10, 0))
+        box1.columnconfigure(1, weight=1)
+        ttk.Label(box1, text="BV 号").grid(row=0, column=0, sticky="w")
+        self.oneclick_var = tk.StringVar()
+        ttk.Entry(box1, textvariable=self.oneclick_var).grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        self.btn_one = ttk.Button(box1, text="立即评论", command=self._on_oneclick)
+        self.btn_one.grid(row=0, column=2, sticky="e")
+        ttk.Label(
+            box1,
+            text="也可以直接粘整条视频链接",
+            foreground="#999",
+            font=FONT_SMALL,
+        ).grid(row=1, column=1, sticky="w", pady=(2, 0))
+
         # ---------------- 运行参数 ----------------
-        box3 = ttk.LabelFrame(parent, text=" 运行参数（都可以随时改） ", padding=10)
-        box3.pack(fill="x", pady=(12, 0))
+        box3 = ttk.LabelFrame(parent, text=" 运行参数（都可以随时改） ", padding=8)
+        box3.pack(fill="x", pady=(8, 0))
         for c in range(6):
             box3.columnconfigure(c, weight=1)
 
@@ -532,30 +550,39 @@ class App(tk.Tk):
         num(1, 0, "延迟下限（秒）", "delay_min")
         num(1, 1, "延迟上限（秒）", "delay_max", hint="建议 15~45，别低于 5")
 
-        # 视频来源 + 回复时效
-        row2 = ttk.Frame(box3)
-        row2.grid(row=2, column=0, columnspan=6, sticky="w", pady=(8, 0))
-        ttk.Label(row2, text="视频来源").pack(side="left")
+        # 第二行右侧：视频来源 + 搜索关键词
+        cell_src = ttk.Frame(box3)
+        cell_src.grid(row=1, column=2, sticky="w", padx=(0, 14), pady=4)
+        ttk.Label(cell_src, text="视频来源").pack(anchor="w")
         self.source_var = tk.StringVar(
             value=SOURCE_LABELS.get(self.cfg.video_source, SOURCE_LABELS["recommend"])
         )
         self.v["video_source"] = self.source_var
         ttk.Combobox(
-            row2,
+            cell_src,
             textvariable=self.source_var,
             values=list(SOURCE_LABELS.values()),
             state="readonly",
-            width=24,
-        ).pack(side="left", padx=(6, 18))
+            width=20,
+        ).pack(anchor="w")
 
+        cell_kw = ttk.Frame(box3)
+        cell_kw.grid(row=1, column=3, sticky="w", padx=(0, 14), pady=4)
+        ttk.Label(cell_kw, text="搜索关键词").pack(anchor="w")
+        ttk.Entry(cell_kw, textvariable=var("search_keyword"), width=16).pack(anchor="w")
+        ttk.Label(cell_kw, text="空着就用上面的来源", foreground="#999", font=FONT_SMALL).pack(anchor="w")
+
+        # 第三行：回复时效 + 主人
+        row2 = ttk.Frame(box3)
+        row2.grid(row=2, column=0, columnspan=6, sticky="w", pady=(6, 0))
         ttk.Label(row2, text="只回复最近（天）").pack(side="left")
         ttk.Entry(row2, textvariable=var("reply_max_age_days"), width=5).pack(side="left", padx=6)
 
-        ttk.Label(row2, text="主人 UID").pack(side="left", padx=(16, 4))
-        ttk.Entry(row2, textvariable=var("master_uid"), width=16).pack(side="left")
+        ttk.Label(row2, text="主人 UID").pack(side="left", padx=(20, 4))
+        ttk.Entry(row2, textvariable=var("master_uid"), width=14).pack(side="left")
         ttk.Label(
             row2,
-            text="可不填；填了有人问「你主人是谁」就会 @ 他",
+            text="可不填；有人问「你主人是谁」就会 @ 他",
             foreground="#999",
             font=FONT_SMALL,
         ).pack(side="left", padx=6)
@@ -705,6 +732,7 @@ class App(tk.Tk):
         cfg.max_replies_per_round = as_int("max_replies_per_round", "每轮回复数", cfg.max_replies_per_round)
         cfg.reply_max_age_days = as_int("reply_max_age_days", "回复时效", cfg.reply_max_age_days)
         cfg.video_source = LABEL_SOURCES.get(str(self.source_var.get()).strip(), "recommend")
+        cfg.search_keyword = s("search_keyword")
         cfg.delay_min = as_int("delay_min", "延迟下限", cfg.delay_min)
         cfg.delay_max = as_int("delay_max", "延迟上限", cfg.delay_max)
         cfg.loop_interval_min = as_int("loop_interval_min", "循环间隔", cfg.loop_interval_min)
@@ -861,6 +889,63 @@ class App(tk.Tk):
             self.btn_stop.state(["disabled"])
 
     # ------------------------------------------------------------------
+    # 一键评论
+    # ------------------------------------------------------------------
+    def _on_oneclick(self):
+        if self._worker and self._worker.is_alive():
+            messagebox.showwarning("正在运行", "机器人正在跑，先点「停止」再一键评论。")
+            return
+
+        raw = self.oneclick_var.get().strip()
+        found = re.search(r"BV[0-9A-Za-z]{10}", raw)
+        if not found:
+            messagebox.showerror(
+                "BV 号不对",
+                "应该是 BV 开头 + 10 位，例如 BV1BXJk6iEdX。\n也可以直接粘整条视频链接。",
+            )
+            return
+        bvid = found.group(0)
+
+        cfg, errors = self._collect()
+        if errors:
+            messagebox.showerror("还不能评论", "\n".join(f"• {e}" for e in errors))
+            return
+        if not self._on_save():
+            return
+
+        try:
+            runner = Runner(cfg, self.store, on_status=lambda info: self.status_queue.put(info))
+        except LLMError as exc:
+            messagebox.showerror("无法启动", str(exc))
+            return
+
+        self.btn_one.state(["disabled"])
+        self.nb.select(self.tab_log)
+
+        def job():
+            try:
+                ok, text = asyncio.run(runner.comment_single(bvid))
+            except Exception as exc:
+                log.exception("一键评论失败")
+                self._ui(messagebox.showerror, "一键评论失败", describe(exc))
+            else:
+                if ok:
+                    if cfg.dry_run:
+                        self._ui(messagebox.showinfo, "演练结果", f"{bvid}\n\n{text}")
+                    else:
+                        self._ui(messagebox.showinfo, "已评论", f"{bvid}\n\n{text}")
+                else:
+                    self._ui(messagebox.showwarning, "没有发送", text)
+            finally:
+                self._ui(self._oneclick_done)
+
+        threading.Thread(target=job, daemon=True, name="oneclick").start()
+
+    def _oneclick_done(self):
+        self.btn_one.state(["!disabled"])
+        self._refresh_status({**self.store.stats(), "state": "空闲", "limit": self.cfg.daily_limit})
+
+    # ------------------------------------------------------------------
     def _poll(self):
         # 又有人双击了 exe？把窗口叫出来
         try:
@@ -1007,7 +1092,8 @@ HELP_TEXT = """\
 • 延迟下限/上限：每个动作前随机等这么久。建议 15~45 秒，别低于 5 秒。
 • 每轮看几个视频：一轮从视频列表里挑几个视频处理，默认 15。
 • 每轮最多回复：防止一次回太多被判定刷屏，默认 5。
-• 视频来源：首页推荐（跟你的账号口味）/ 热门榜（全站热门）/ 排行榜（三天榜）/ 混合（每轮换一个）。想更随机就选混合。
+• 视频来源：首页推荐（跟你的账号口味）/ 热门榜 / 排行榜 / 搜索关键词 / 混合（每轮换一个）。
+• 搜索关键词：视频来源选「搜索关键词」时用它搜；空着就退回首页推荐。混合模式下填了关键词，也有机会抽到搜索。
 • 只回复最近（天）：消息中心里超过这个天数的旧消息就不回了，默认 3 天，0 表示不限。
 • 循环运行：不开就只跑一轮；开了会按「循环间隔」一直跑，点「停止」随时中断。
 
@@ -1052,6 +1138,16 @@ HELP_TEXT = """\
 2. 用浏览器正常刷几分钟 B站，有验证码就过一下；
 3. 把延迟调到 60~120 秒、每日上限降到 5；
 4. Cookie 太旧就重新扫码登录。
+
+【一键评论】
+
+「运行设置」里有一栏「一键评论」：粘 BV 号（或者整条视频链接）→ 点「立即评论」，
+它会马上拉这条视频的标题、简介和热评，生成一条评论发出去。
+
+• 同样受「每日上限」限制；
+• 评过会写进去重记录，同一条不会评第二次；
+• 开着「演练模式」时只生成、不发送；
+• 机器人正在跑的时候不能一键评论，先点「停止」。
 
 【关窗不会退出】
 
