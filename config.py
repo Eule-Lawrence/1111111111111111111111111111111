@@ -158,6 +158,7 @@ class Config:
     reply_dm_enabled: bool = False  # 回复私信（默认关，私信更敏感）
     max_dm_per_round: int = 3       # 每轮最多回几条私信
     dm_daily_limit: int = 20        # 私信每天的条数上限（不占评论额度）
+    dm_interval_sec: int = 60       # 多久查一次私信（秒），收到基本一分钟内就回
     delay_min: int = 15             # 每次动作前随机等待的下限（秒）
     delay_max: int = 45             # 每次动作前随机等待的上限（秒）
     comment_enabled: bool = True
@@ -226,6 +227,8 @@ class Config:
             errors.append("每轮回复数要在 0 ~ 200 之间（0 = 不限）")
         if not 1 <= self.dm_daily_limit <= 200:
             errors.append("私信每日上限要在 1 ~ 200 之间")
+        if not 15 <= self.dm_interval_sec <= 3600:
+            errors.append("私信检查间隔要在 15 ~ 3600 秒之间")
         if self.video_source not in ("recommend", "popular", "rank", "search", "mix"):
             errors.append("视频来源只能是：首页推荐 / 热门榜 / 排行榜 / 搜索 / 混合")
         if len(self.search_keyword.strip()) > 40:

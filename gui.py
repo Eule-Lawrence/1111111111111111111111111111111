@@ -588,8 +588,11 @@ class App(tk.Tk):
         ttk.Label(row2, text="只回复最近（天）").pack(side="left")
         ttk.Entry(row2, textvariable=var("reply_max_age_days"), width=5).pack(side="left", padx=6)
 
-        ttk.Label(row2, text="私信/天").pack(side="left", padx=(18, 4))
-        ttk.Entry(row2, textvariable=var("dm_daily_limit"), width=5).pack(side="left")
+        ttk.Label(row2, text="私信/天").pack(side="left", padx=(14, 4))
+        ttk.Entry(row2, textvariable=var("dm_daily_limit"), width=4).pack(side="left")
+        ttk.Label(row2, text="每").pack(side="left", padx=(6, 2))
+        ttk.Entry(row2, textvariable=var("dm_interval_sec"), width=4).pack(side="left")
+        ttk.Label(row2, text="秒查一次").pack(side="left", padx=(2, 0))
 
         ttk.Label(row2, text="主人 UID").pack(side="left", padx=(18, 4))
         ttk.Entry(row2, textvariable=var("master_uid"), width=14).pack(side="left")
@@ -771,6 +774,7 @@ class App(tk.Tk):
         cfg.loop_interval_min = as_int("loop_interval_min", "评论间隔", cfg.loop_interval_min)
         cfg.reply_interval_min = as_int("reply_interval_min", "消息间隔", cfg.reply_interval_min)
         cfg.dm_daily_limit = as_int("dm_daily_limit", "私信每日上限", cfg.dm_daily_limit)
+        cfg.dm_interval_sec = as_int("dm_interval_sec", "私信检查间隔", cfg.dm_interval_sec)
 
         cfg.comment_enabled = bool(self.v["comment_enabled"].get())
         cfg.reply_enabled = bool(self.v["reply_enabled"].get())
@@ -1218,6 +1222,11 @@ HELP_TEXT = """\
 @主人 主人这个视频是啥啥啥
 
 如果你配了主人 UID，发出去时会自动把 @主人 换成真实的 @昵称（带提醒）。
+
+【私信】
+
+默认关，勾「回复私信」才会回。私信是单独一条节奏：默认 **每 60 秒**查一次，
+所以基本收到一分钟内就会回（不用等评论轮）。私信有单独的每日上限，不占评论额度。
 
 【主题】
 

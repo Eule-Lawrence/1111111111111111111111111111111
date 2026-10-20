@@ -63,6 +63,7 @@ class Runner:
         self.bili = BiliClient(cfg)
         self.llm = LLMClient(cfg)
         self._next_reply_at = 0.0
+        self._next_dm_at = 0.0
 
     # ------------------------------------------------------------------
     @property
@@ -109,13 +110,15 @@ class Runner:
             comment_every = max(1, int(self.cfg.loop_interval_min)) * 60
             reply_every = max(1, int(self.cfg.reply_interval_min)) * 60
             log.info(
-                "节奏：评论每 %d 分钟一轮，消息每 %d 分钟查一次（两条线互不阻塞）",
+                "节奏：评论每 %d 分钟、消息每 %d 分钟、私信每 %d 秒（三条线互不阻塞）",
                 comment_every // 60,
                 reply_every // 60,
+                int(self.cfg.dm_interval_sec) if getattr(self.cfg, "reply_dm_enabled", False) else 0,
             )
             next_comment = 0.0
             while not self.stopping:
                 await self._maybe_do_replies(reply_every)
+                await self._maybe_do_dms()
                 if self.stopping or self.fatal_reason:
                     break
                 if self.cfg.comment_enabled and time.time() >= next_comment:
@@ -285,8 +288,9 @@ class Runner:
         for v in videos:
             if self.stopping or self.fatal_reason:
                 return
-            # 长评论轮里也要及时回消息：到点就插一次
+            # 长评论轮里也要及时回消息/私信：到点就插一次
             await self._maybe_do_replies(max(60, int(self.cfg.reply_interval_min) * 60))
+            await self._maybe_do_dms()
             if self.stopping or self.fatal_reason:
                 return
             if self.store.today_count() >= self.cfg.daily_limit:
@@ -392,9 +396,17 @@ class Runner:
             await self._do_replies()
         if self.stopping or self.fatal_reason:
             return
-        if getattr(self.cfg, "reply_dm_enabled", False):
-            await self._do_dms()
         self._next_reply_at = time.time() + max(60, int(every_seconds))
+
+    # ------------------------------------------------------------------
+    async def _maybe_do_dms(self) -> None:
+        """私信单独一条快节奏：默认 60 秒查一次，收到基本一分钟内就回。"""
+        if not getattr(self.cfg, "reply_dm_enabled", False):
+            return
+        if time.time() < self._next_dm_at:
+            return
+        await self._do_dms()
+        self._next_dm_at = time.time() + max(15, int(self.cfg.dm_interval_sec))
 
     # ------------------------------------------------------------------
     async def _do_replies(self) -> None:
