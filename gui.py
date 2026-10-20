@@ -554,7 +554,8 @@ class App(tk.Tk):
         num(0, 0, "每日上限（条）", "daily_limit")
         num(0, 1, "每轮看几个视频", "videos_per_round")
         num(0, 2, "每轮最多回复", "max_replies_per_round")
-        num(0, 3, "循环间隔（分钟）", "loop_interval_min")
+        num(0, 3, "评论间隔（分钟）", "loop_interval_min")
+        num(0, 4, "消息间隔（分钟）", "reply_interval_min")
 
         num(1, 0, "延迟下限（秒）", "delay_min")
         num(1, 1, "延迟上限（秒）", "delay_max", hint="建议 15~45，别低于 5")
@@ -767,7 +768,9 @@ class App(tk.Tk):
         cfg.search_keyword = s("search_keyword")
         cfg.delay_min = as_int("delay_min", "延迟下限", cfg.delay_min)
         cfg.delay_max = as_int("delay_max", "延迟上限", cfg.delay_max)
-        cfg.loop_interval_min = as_int("loop_interval_min", "循环间隔", cfg.loop_interval_min)
+        cfg.loop_interval_min = as_int("loop_interval_min", "评论间隔", cfg.loop_interval_min)
+        cfg.reply_interval_min = as_int("reply_interval_min", "消息间隔", cfg.reply_interval_min)
+        cfg.dm_daily_limit = as_int("dm_daily_limit", "私信每日上限", cfg.dm_daily_limit)
 
         cfg.comment_enabled = bool(self.v["comment_enabled"].get())
         cfg.reply_enabled = bool(self.v["reply_enabled"].get())
