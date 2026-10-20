@@ -629,6 +629,7 @@ class App(tk.Tk):
         parent.rowconfigure(1, weight=2)
         parent.rowconfigure(3, weight=2)
         parent.rowconfigure(5, weight=1)
+        parent.rowconfigure(7, weight=1)
         parent.columnconfigure(0, weight=1)
 
         ttk.Label(parent, text="评论 System Prompt", font=FONT_BIG).grid(row=0, column=0, sticky="w")
@@ -666,7 +667,20 @@ class App(tk.Tk):
         s3.pack(side="right", fill="y")
         self.presets_text = t3
 
-        ttk.Button(parent, text="恢复默认提示词", command=self._reset_prompts).grid(row=6, column=0, sticky="w")
+        ttk.Label(parent, text="口语 / 网络用语（一行一条，可以写「词=意思」）", font=FONT_BIG).grid(
+            row=6, column=0, sticky="w", pady=(6, 0)
+        )
+        f4 = ttk.Frame(parent)
+        f4.grid(row=7, column=0, sticky="nsew", pady=(4, 8))
+        t4 = tk.Text(f4, wrap="word", height=4, font=FONT, undo=True)
+        t4.insert("1.0", self.cfg.slang_notes)
+        s4 = ttk.Scrollbar(f4, orient="vertical", command=t4.yview)
+        t4.configure(yscrollcommand=s4.set)
+        t4.pack(side="left", fill="both", expand=True)
+        s4.pack(side="right", fill="y")
+        self.slang_text = t4
+
+        ttk.Button(parent, text="恢复默认提示词", command=self._reset_prompts).grid(row=8, column=0, sticky="w")
 
     # ------------------------------------------------------------------
     def _build_log(self, parent):
@@ -787,6 +801,7 @@ class App(tk.Tk):
         cfg.system_prompt = self.system_text.get("1.0", "end").strip() or cfg.system_prompt
         cfg.reply_prompt = self.reply_text.get("1.0", "end").strip() or cfg.reply_prompt
         cfg.comment_presets = self.presets_text.get("1.0", "end").strip()
+        cfg.slang_notes = self.slang_text.get("1.0", "end").strip()
         cfg.theme = theme_mod.LABEL_TO_KEY.get(str(self.theme_var.get()).strip(), "blue")
 
         errors.extend(cfg.validate())
@@ -1227,6 +1242,14 @@ HELP_TEXT = """\
 
 默认关，勾「回复私信」才会回。私信是单独一条节奏：默认 **每 60 秒**查一次，
 所以基本收到一分钟内就会回（不用等评论轮）。私信有单独的每日上限，不占评论额度。
+
+【口语 / 网络用语】
+
+人设页最下面那一栏，一行一条，推荐写成「词=意思」，例如：
+
+何意味=不知道对方的话或者内容有什么意义
+
+AI 会理解意思后自然使用，不会每句都塞。评论、回复、私信都会参考这一栏。
 
 【主题】
 

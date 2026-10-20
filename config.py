@@ -144,6 +144,7 @@ class Config:
     reply_prompt: str = DEFAULT_REPLY_PROMPT
     dm_prompt: str = DEFAULT_DM_PROMPT
     comment_presets: str = ""       # 预设评论，一行一条，给 AI 参考
+    slang_notes: str = ""           # 口语/网络用语，一行一条，可写「词=意思」
     theme: str = "blue"            # 界面主题：blue / dark / pink / green
 
     # ---- 行为与风控 ----

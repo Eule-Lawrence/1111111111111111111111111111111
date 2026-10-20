@@ -165,6 +165,9 @@ class Runner:
         self._status("运行中")
 
     # ------------------------------------------------------------------
+    def _slang(self) -> str:
+        return (getattr(self.cfg, "slang_notes", "") or "").strip()
+
     def _presets(self) -> list[str]:
         raw = (getattr(self.cfg, "comment_presets", "") or "").strip()
         return [line.strip() for line in raw.splitlines() if line.strip()][:8]
@@ -210,7 +213,8 @@ class Runner:
                 log.debug("拉取字幕失败：%s", exc)
 
         text = await self.llm.make_comment(
-            info, hot_comments=hot, subtitle=subtitle, presets=self._presets()
+            info, hot_comments=hot, subtitle=subtitle,
+            presets=self._presets(), slang=self._slang()
         )
         text, mention = self._apply_master_mention(text)
         log.info(
@@ -343,7 +347,8 @@ class Runner:
             # 3) 生成评论
             try:
                 text = await self.llm.make_comment(
-                    info, hot_comments=hot, subtitle=subtitle, presets=self._presets()
+                    info, hot_comments=hot, subtitle=subtitle,
+                    presets=self._presets(), slang=self._slang()
                 )
                 text, mention = self._apply_master_mention(text)
             except LLMError as exc:
@@ -500,7 +505,9 @@ class Runner:
                     hint = "对方在问你的主人是谁。你没被谁收养，就说自己是野生的、自己游过来的。"
 
             try:
-                text = await self.llm.make_reply(it, is_master=is_master, extra_hint=hint)
+                text = await self.llm.make_reply(
+                    it, is_master=is_master, extra_hint=hint, slang=self._slang()
+                )
             except LLMError as exc:
                 log.error("生成回复失败：%s", exc)
                 self.store.add_error()
@@ -605,7 +612,7 @@ class Runner:
             texts = [dm_text(m) for m in msgs if int(m.get("sender_uid") or 0) != self.bili.self_uid]
             texts = [t for t in texts if t]
             try:
-                text = await self.llm.make_dm_reply(texts, user_name=f"UID{talker}")
+                text = await self.llm.make_dm_reply(texts, user_name=f"UID{talker}", slang=self._slang())
             except LLMError as exc:
                 log.error("生成私信回复失败：%s", exc)
                 self.store.add_error()

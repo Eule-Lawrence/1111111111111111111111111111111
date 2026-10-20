@@ -65,6 +65,7 @@ class LLMClient:
         hot_comments: list[str] | None = None,
         subtitle: str | None = "",
         presets: list[str] | None = None,
+        slang: str = "",
     ) -> str:
         lines = [
             f"视频标题：{info.title or '（无）'}",
@@ -85,6 +86,10 @@ class LLMClient:
             lines.append("")
             lines.append("预设评论（学它们的语气和句式，挑一条的路子来写，别照抄；不要逐字复读）：")
             lines.extend(f"- {p[:80]}" for p in presets[:8])
+        if slang.strip():
+            lines.append("")
+            lines.append("口语/网络用语参考（理解意思后自然使用，别每句都塞，别用错语境）：")
+            lines.append(slang.strip()[:800])
         lines.append("")
         lines.append("给这个视频写一条评论吧。")
         prompt = "\n".join(lines)
@@ -95,7 +100,9 @@ class LLMClient:
             text = _pick(_FALLBACK_COMMENTS)
         return text
 
-    async def make_reply(self, item: "InboxItem", is_master: bool = False, extra_hint: str = "") -> str:
+    async def make_reply(
+        self, item: "InboxItem", is_master: bool = False, extra_hint: str = "", slang: str = ""
+    ) -> str:
         lines = [f"视频：{item.title or item.bvid or '（未知）'}"]
         if item.user_name:
             lines.append(f"回复我的人：{item.user_name}")
@@ -107,6 +114,9 @@ class LLMClient:
             lines.append("注意：这条是我主人（账号主人）发来的，可以亲近一点、撒个娇，但别泄露隐私。")
         if extra_hint:
             lines.append(extra_hint)
+        if slang.strip():
+            lines.append("可以用这些口语/网络用语（理解意思再自然使用，别硬塞、别用错）：")
+            lines.append(slang.strip()[:500])
         lines.append("回他一句吧。")
         raw = await self._chat(self.cfg.reply_prompt, "\n".join(lines))
         text = clean_text(raw, REPLY_LIMIT)
@@ -115,7 +125,7 @@ class LLMClient:
             text = _pick(_FALLBACK_REPLIES)
         return text
 
-    async def make_dm_reply(self, texts: list[str], user_name: str = "") -> str:
+    async def make_dm_reply(self, texts: list[str], user_name: str = "", slang: str = "") -> str:
         """回复 B站私信。"""
         lines = []
         if user_name:
@@ -126,6 +136,9 @@ class LLMClient:
                 lines.append(f"- {t[:120]}")
         if not lines or len(lines) == 0:
             lines.append("（没拿到内容，就随口接一句）")
+        if slang.strip():
+            lines.append("可以用这些口语/网络用语（理解意思再自然使用，别硬塞）：")
+            lines.append(slang.strip()[:400])
         lines.append("回他一句私信吧。")
         raw = await self._chat(self.cfg.dm_prompt, "\n".join(lines))
         text = clean_text(raw, REPLY_LIMIT)
