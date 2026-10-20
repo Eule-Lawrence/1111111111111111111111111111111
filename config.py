@@ -17,7 +17,7 @@ from typing import Any
 
 APP_NAME = "BiliFish"
 APP_TITLE = "大肥鱼 · B站 AI 自动评论"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # ---------------------------------------------------------------------------
 # 默认提示词（界面上可以改，改完保存在 config.json 里）
@@ -38,6 +38,16 @@ DEFAULT_SYSTEM_PROMPT = """你是一条可爱的B站大肥鱼，DeepSeek 的拟�
 【示例】
 标题：宿舍停电后我用手机拍了半小时的银河
 评论：停电反而拍到了银河，这波血赚啊(๑•̀ㅂ•́)و✧"""
+
+DEFAULT_DM_PROMPT = """你是一条可爱的B站大肥鱼，DeepSeek 的拟人化形象。现在有人给你发 B站私信，你要回一句。
+
+【规则】
+1. 30 字以内，像真人随口回，可以带颜文字；
+2. 礼貌但有点傲娇，可以接梗；
+3. 不透露真实个人信息（姓名、住址、学校、单位、电话），不发照片；
+4. 不加微信/QQ、不点陌生链接、不谈钱、不转账；
+5. 对方推销、要联系方式、约线下，就客气拒绝或打岔；
+6. 只输出回复正文，不要引号、不要解释。"""
 
 DEFAULT_REPLY_PROMPT = """你是一条可爱的B站大肥鱼，DeepSeek 的拟人化形象。有人回复了你的评论，或者 @ 了你，你要接着回一句。
 
@@ -132,23 +142,30 @@ class Config:
     # ---- 人设 ----
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     reply_prompt: str = DEFAULT_REPLY_PROMPT
+    dm_prompt: str = DEFAULT_DM_PROMPT
+    comment_presets: str = ""       # 预设评论，一行一条，给 AI 参考
+    theme: str = "blue"            # 界面主题：blue / dark / pink / green
 
     # ---- 行为与风控 ----
     daily_limit: int = 20           # 每日最多发多少条（评论 + 回复共用）
     videos_per_round: int = 15      # 每轮最多看多少个推荐视频
     video_source: str = "recommend"  # recommend / popular / rank / search / mix
     search_keyword: str = ""        # 视频来源=搜索时用的关键词；空 = 退回首页推荐
-    max_replies_per_round: int = 5  # 每轮最多回多少条消息
+    max_replies_per_round: int = 0  # 每轮最多回几条消息，0 = 不限（陌生人的追评都会回）
     reply_max_age_days: int = 3     # 只回复最近几天的消息，0 = 不限
     use_hot_comments: bool = True   # 生成评论前参考这个视频的热评
     use_subtitle: bool = False      # 生成评论前参考 CC 字幕（命中率低，多一次请求）
+    reply_dm_enabled: bool = False  # 回复私信（默认关，私信更敏感）
+    max_dm_per_round: int = 3       # 每轮最多回几条私信
+    dm_daily_limit: int = 20        # 私信每天的条数上限（不占评论额度）
     delay_min: int = 15             # 每次动作前随机等待的下限（秒）
     delay_max: int = 45             # 每次动作前随机等待的上限（秒）
     comment_enabled: bool = True
     reply_enabled: bool = True
     dry_run: bool = False           # 只生成不发送（演练模式）
     loop_enabled: bool = True       # 常驻循环（关掉就只跑一轮）
-    loop_interval_min: int = 30     # 两轮之间休息多少分钟
+    loop_interval_min: int = 30     # 评论轮之间的间隔（分钟）
+    reply_interval_min: int = 10    # 消息轮之间的间隔（分钟，和评论分开）
 
     # ------------------------------------------------------------------
     @classmethod
@@ -205,8 +222,10 @@ class Config:
             errors.append("每日上限要在 1 ~ 200 之间")
         if not 1 <= self.videos_per_round <= 50:
             errors.append("每轮视频数要在 1 ~ 50 之间")
-        if not 1 <= self.max_replies_per_round <= 50:
-            errors.append("每轮回复数要在 1 ~ 50 之间")
+        if not 0 <= self.max_replies_per_round <= 200:
+            errors.append("每轮回复数要在 0 ~ 200 之间（0 = 不限）")
+        if not 1 <= self.dm_daily_limit <= 200:
+            errors.append("私信每日上限要在 1 ~ 200 之间")
         if self.video_source not in ("recommend", "popular", "rank", "search", "mix"):
             errors.append("视频来源只能是：首页推荐 / 热门榜 / 排行榜 / 搜索 / 混合")
         if len(self.search_keyword.strip()) > 40:
@@ -222,7 +241,11 @@ class Config:
         if not 16 <= self.max_tokens <= 2048:
             errors.append("max_tokens 要在 16 ~ 2048 之间")
         if not 1 <= self.loop_interval_min <= 1440:
-            errors.append("循环间隔要在 1 ~ 1440 分钟之间")
+            errors.append("评论间隔要在 1 ~ 1440 分钟之间")
+        if not 1 <= self.reply_interval_min <= 1440:
+            errors.append("消息间隔要在 1 ~ 1440 分钟之间")
+        if self.theme not in ("blue", "dark", "pink", "green"):
+            errors.append("主题只能是 blue / dark / pink / green")
         if not (self.comment_enabled or self.reply_enabled):
             errors.append("「自动评论」和「回复消息」至少要开一个")
         return errors

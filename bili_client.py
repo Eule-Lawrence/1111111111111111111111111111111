@@ -19,7 +19,7 @@ from typing import Any, Optional
 
 import httpx
 
-from bilibili_api import comment, homepage, hot, rank, search, user, video
+from bilibili_api import comment, homepage, hot, rank, search, session, user, video
 from bilibili_api.comment import CommentResourceType, OrderType
 from bilibili_api.exceptions import NetworkException, ResponseCodeException
 from bilibili_api.utils.network import Api, Credential
@@ -357,10 +357,12 @@ class BiliClient:
         return text[:max_chars]
 
     # -- 发评论 --------------------------------------------------------
-    async def post_comment(self, info: VideoInfo, text: str) -> dict:
+    async def post_comment(
+        self, info: VideoInfo, text: str, mention: Optional[tuple[str, int]] = None
+    ) -> dict:
         if not info.aid:
             raise ValueError(f"视频 {info.bvid} 缺少 aid，无法评论")
-        return await self._send(text=text, oid=info.aid)
+        return await self._send(text=text, oid=info.aid, mention=mention)
 
     async def reply(self, item: InboxItem, text: str, mention: Optional[tuple[str, int]] = None) -> dict:
         if not item.aid:
@@ -450,6 +452,23 @@ class BiliClient:
             out.extend(self._parse_msgfeed(kind, data))
         return out
 
+    # -- 私信 ----------------------------------------------------------
+    async def fetch_dm_sessions(self) -> list[dict]:
+        data = await session.get_sessions(self.credential, session_type=4)
+        return (data or {}).get("session_list") or []
+
+    async def fetch_dm_messages(self, talker_id: int, limit: int = 10) -> list[dict]:
+        data = await session.fetch_session_msgs(
+            talker_id=talker_id, credential=self.credential, session_type=4, begin_seqno=0
+        )
+        msgs = (data or {}).get("messages") or []
+        return msgs[-limit:]
+
+    async def send_dm(self, talker_id: int, text: str) -> dict:
+        return await session.send_msg(
+            self.credential, talker_id, session.EventType.TEXT, text
+        )
+
     async def _fetch_feed(self, kind: str) -> dict:
         """直接打消息中心接口（库里的封装会传坏参数，返回空）。"""
         cookies = {k: v for k, v in self.credential.get_cookies().items() if v}
@@ -534,6 +553,20 @@ class BiliClient:
 def _find_bvid(text: str) -> str:
     m = BV_RE.search(text or "")
     return m.group(0) if m else ""
+
+
+def dm_text(msg: dict) -> str:
+    """私信 content 是个 JSON 字符串，取出里面的正文。"""
+    raw = msg.get("content") or ""
+    if not isinstance(raw, str):
+        return ""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return raw[:200]
+    if isinstance(data, dict):
+        return str(data.get("content") or data.get("text") or "")[:200]
+    return str(data)[:200]
 
 
 def _clean_text_html(text: str) -> str:

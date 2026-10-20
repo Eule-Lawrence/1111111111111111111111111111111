@@ -54,6 +54,7 @@ class StateStore:
                 "commented": data.get("commented") or {},
                 "replied": data.get("replied") or {},
                 "daily": data.get("daily") or {},
+                "daily_dm": data.get("daily_dm") or {},
                 "totals": data.get("totals") or {"comments": 0, "replies": 0, "errors": 0},
             }
             return self
@@ -115,6 +116,17 @@ class StateStore:
             self.state["daily"][day] = int(self.state["daily"].get(day, 0)) + n
             return self.state["daily"][day]
 
+    def dm_today(self) -> int:
+        with self._lock:
+            return int(self.state.get("daily_dm", {}).get(_today(), 0))
+
+    def add_dm(self) -> int:
+        with self._lock:
+            day = _today()
+            daily_dm = self.state.setdefault("daily_dm", {})
+            daily_dm[day] = int(daily_dm.get(day, 0)) + 1
+            return daily_dm[day]
+
     def add_error(self) -> None:
         with self._lock:
             self.state["totals"]["errors"] = int(self.state["totals"].get("errors", 0)) + 1
@@ -143,6 +155,7 @@ class StateStore:
                 replied.pop(k, None)
 
         cutoff = (datetime.now() - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%d")
-        daily: dict[str, Any] = self.state["daily"]
-        for day in [d for d in daily if d < cutoff]:
-            daily.pop(day, None)
+        for key in ("daily", "daily_dm"):
+            bucket: dict[str, Any] = self.state.get(key) or {}
+            for day in [d for d in bucket if d < cutoff]:
+                bucket.pop(day, None)

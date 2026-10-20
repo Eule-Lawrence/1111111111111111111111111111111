@@ -17,7 +17,7 @@ from typing import Callable, Optional
 
 from bilibili_api.exceptions import ApiException
 
-from bili_client import SOURCE_NAMES, BiliClient, InboxItem
+from bili_client import SOURCE_NAMES, BiliClient, InboxItem, dm_text
 from config import Config
 from llm_client import LLMClient, LLMError
 from risk import (
@@ -62,6 +62,7 @@ class Runner:
         self.fatal_reason = ""
         self.bili = BiliClient(cfg)
         self.llm = LLMClient(cfg)
+        self._next_reply_at = 0.0
 
     # ------------------------------------------------------------------
     @property
@@ -97,19 +98,30 @@ class Runner:
         )
         try:
             await self._prepare()
-            while not self.stopping:
+            if not self.cfg.loop_enabled:
                 await self._one_round()
-                if self.stopping:
+                log.warning(
+                    "⚠️ 没有勾选「循环运行」，本轮结束后程序就停了。"
+                    "想让它一直守着（回消息、刷视频），请勾上「循环运行」再点开始。"
+                )
+                return
+
+            comment_every = max(1, int(self.cfg.loop_interval_min)) * 60
+            reply_every = max(1, int(self.cfg.reply_interval_min)) * 60
+            log.info(
+                "节奏：评论每 %d 分钟一轮，消息每 %d 分钟查一次（两条线互不阻塞）",
+                comment_every // 60,
+                reply_every // 60,
+            )
+            next_comment = 0.0
+            while not self.stopping:
+                await self._maybe_do_replies(reply_every)
+                if self.stopping or self.fatal_reason:
                     break
-                if not self.cfg.loop_enabled:
-                    log.warning(
-                        "⚠️ 没有勾选「循环运行」，本轮结束后程序就停了。"
-                        "想让它一直守着（回消息、刷视频），请勾上「循环运行」再点开始。"
-                    )
-                    break
-                minutes = max(1, int(self.cfg.loop_interval_min))
-                log.info("本轮结束，休息 %d 分钟后开始下一轮（点「停止」可随时中断）", minutes)
-                if not await sleep_or_stop(minutes * 60, self._stop):
+                if self.cfg.comment_enabled and time.time() >= next_comment:
+                    await self._do_comments()
+                    next_comment = time.time() + comment_every
+                if not await sleep_or_stop(5, self._stop):
                     break
         except RiskControlError as exc:
             log.error("⛔ 已停止：%s", exc)
@@ -150,6 +162,23 @@ class Runner:
         self._status("运行中")
 
     # ------------------------------------------------------------------
+    def _presets(self) -> list[str]:
+        raw = (getattr(self.cfg, "comment_presets", "") or "").strip()
+        return [line.strip() for line in raw.splitlines() if line.strip()][:8]
+
+    def _apply_master_mention(self, text: str) -> tuple[str, Optional[tuple[str, int]]]:
+        """预设里写了 @主人，就换成真实昵称 + 真 @（没有主人信息时降级成「我主人」）。"""
+        if "@主人" not in text:
+            return text, None
+        name = self.bili.master_name
+        try:
+            uid = int((self.cfg.master_uid or "").strip() or 0)
+        except ValueError:
+            uid = 0
+        if name and uid:
+            return text.replace("@主人", f"@{name}"), (name, uid)
+        return text.replace("@主人", "我主人"), None
+
     async def comment_single(self, bvid: str) -> tuple[bool, str]:
         """一键评论：给指定 BV 生成并发送一条评论。
 
@@ -177,7 +206,10 @@ class Runner:
             except Exception as exc:
                 log.debug("拉取字幕失败：%s", exc)
 
-        text = await self.llm.make_comment(info, hot_comments=hot, subtitle=subtitle)
+        text = await self.llm.make_comment(
+            info, hot_comments=hot, subtitle=subtitle, presets=self._presets()
+        )
+        text, mention = self._apply_master_mention(text)
         log.info(
             "一键评论｜%s｜%s（参考：热评 %d 条、字幕 %d 字）→ %s",
             info.bvid,
@@ -190,7 +222,7 @@ class Runner:
         if self.cfg.dry_run:
             return True, f"演练模式，没有真的发送。生成的评论：\n\n{text}"
 
-        await self.bili.post_comment(info, text)
+        await self.bili.post_comment(info, text, mention=mention)
         self.store.mark_commented(info.bvid, info.aid, text)
         self.store.add_count()
         self.store.save()
@@ -214,6 +246,11 @@ class Runner:
 
         if self.cfg.reply_enabled:
             await self._do_replies()
+        if self.stopping or self.fatal_reason:
+            return
+
+        if getattr(self.cfg, "reply_dm_enabled", False):
+            await self._do_dms()
 
         log.info(
             "本轮结束｜今日 %d/%d｜累计评论 %d 条、回复 %d 条",
@@ -246,6 +283,10 @@ class Runner:
             return
 
         for v in videos:
+            if self.stopping or self.fatal_reason:
+                return
+            # 长评论轮里也要及时回消息：到点就插一次
+            await self._maybe_do_replies(max(60, int(self.cfg.reply_interval_min) * 60))
             if self.stopping or self.fatal_reason:
                 return
             if self.store.today_count() >= self.cfg.daily_limit:
@@ -297,7 +338,10 @@ class Runner:
 
             # 3) 生成评论
             try:
-                text = await self.llm.make_comment(info, hot_comments=hot, subtitle=subtitle)
+                text = await self.llm.make_comment(
+                    info, hot_comments=hot, subtitle=subtitle, presets=self._presets()
+                )
+                text, mention = self._apply_master_mention(text)
             except LLMError as exc:
                 log.error("生成评论失败：%s", exc)
                 self.store.add_error()
@@ -316,7 +360,7 @@ class Runner:
             if not await human_delay(self.cfg, self._stop, log.info, "发评论"):
                 return
             try:
-                res = await self.bili.post_comment(info, text)
+                res = await self.bili.post_comment(info, text, mention=mention)
             except ApiException as exc:
                 self._handle_api_error(exc, f"评论 {v.bvid}")
                 if self.fatal_reason:
@@ -337,6 +381,21 @@ class Runner:
 
     # ------------------------------------------------------------------
     # 回复
+    # ------------------------------------------------------------------
+    async def _maybe_do_replies(self, every_seconds: int = 600) -> None:
+        """到点了就查一次消息（@/评论/私信），和评论轮互不阻塞。"""
+        if not self.cfg.reply_enabled and not getattr(self.cfg, "reply_dm_enabled", False):
+            return
+        if time.time() < self._next_reply_at:
+            return
+        if self.cfg.reply_enabled:
+            await self._do_replies()
+        if self.stopping or self.fatal_reason:
+            return
+        if getattr(self.cfg, "reply_dm_enabled", False):
+            await self._do_dms()
+        self._next_reply_at = time.time() + max(60, int(every_seconds))
+
     # ------------------------------------------------------------------
     async def _do_replies(self) -> None:
         if not await human_delay(self.cfg, self._stop, log.info, "拉取消息"):
@@ -372,14 +431,17 @@ class Runner:
             if cutoff and it.ts and it.ts < cutoff:
                 expired += 1
                 continue
-            if not it.reply_id and it.aid and it.user_mid:
-                # @ 的消息有时不带 rpid，去视频最新评论里捞一次
+            if not it.reply_id and it.aid and it.user_mid and it.kind == "at":
+                # @ 的消息有时不带 rpid，去视频最新评论里捞一次（找不到就算了，别刷错误）
                 try:
                     rpid = await self.bili.find_recent_comment_rpid(it.aid, it.user_mid, it.text)
                 except ApiException as exc:
-                    self._handle_api_error(exc, "查找被 @ 的评论")
-                    if self.fatal_reason:
-                        return
+                    if is_risk(exc):
+                        self._handle_api_error(exc, "查找被 @ 的评论")
+                        if self.fatal_reason:
+                            return
+                    else:
+                        log.debug("找不到被 @ 的评论：%s", describe(exc))
                     rpid = 0
                 except Exception:
                     rpid = 0
@@ -407,7 +469,8 @@ class Runner:
         if master_uid:
             pending.sort(key=lambda x: 0 if x.user_mid == master_uid else 1)
 
-        for it in pending[: self.cfg.max_replies_per_round]:
+        limit = len(pending) if int(self.cfg.max_replies_per_round) <= 0 else int(self.cfg.max_replies_per_round)
+        for it in pending[:limit]:
             if self.stopping or self.fatal_reason:
                 return
             if self.store.today_count() >= self.cfg.daily_limit:
@@ -467,6 +530,98 @@ class Runner:
             self.store.add_count()
             self.store.save()
             log.info("✅ 已回复 %s（rpid=%s）今日 %d/%d", who, _rpid(res) or "?", self.store.today_count(), self.cfg.daily_limit)
+            self._status("运行中")
+
+    # ------------------------------------------------------------------
+    async def _do_dms(self) -> None:
+        """回复私信：只看最后一条是对方发的纯文本，且没回过、不太旧的会话。"""
+        if not await human_delay(self.cfg, self._stop, log.info, "拉取私信"):
+            return
+        try:
+            sessions = await self.bili.fetch_dm_sessions()
+        except ApiException as exc:
+            self._handle_api_error(exc, "拉取私信列表")
+            return
+        except Exception as exc:
+            log.warning("拉取私信列表失败：%s", exc)
+            return
+
+        cutoff = time.time() - max(1, int(self.cfg.reply_max_age_days)) * 86400
+        pending: list[tuple[int, dict, str]] = []
+        for s in sessions:
+            talker = int(s.get("talker_id") or 0)
+            last = s.get("last_msg") or {}
+            if not talker or talker == self.bili.self_uid:
+                continue
+            if int(last.get("sender_uid") or 0) == self.bili.self_uid:
+                continue  # 最后一条是我说的，等对方先开口
+            if int(last.get("msg_type") or 0) != 1:
+                continue  # 只要纯文本，系统通知（10）之类的跳过
+            if int(last.get("timestamp") or 0) < cutoff:
+                continue
+            key = f"dm:{talker}:{last.get('msg_key') or last.get('timestamp')}"
+            if self.store.is_replied(key):
+                continue
+            pending.append((talker, last, key))
+
+        if not pending:
+            log.info("私信：没有需要回复的")
+            return
+        log.info("私信：%d 个会话待回复", len(pending))
+
+        for talker, last, key in pending[: max(1, int(self.cfg.max_dm_per_round))]:
+            if self.stopping or self.fatal_reason:
+                return
+            if self.store.today_count() >= self.cfg.daily_limit:
+                log.info("今日评论额度已满，停止回私信")
+                return
+            if self.store.dm_today() >= self.cfg.dm_daily_limit:
+                log.info("今日私信额度已满（%d/%d），停止回私信", self.store.dm_today(), self.cfg.dm_daily_limit)
+                return
+
+            try:
+                msgs = await self.bili.fetch_dm_messages(talker)
+            except ApiException as exc:
+                self._handle_api_error(exc, "拉取私信内容")
+                if self.fatal_reason:
+                    return
+                continue
+            except Exception as exc:
+                log.warning("拉取私信内容失败：%s", exc)
+                continue
+
+            texts = [dm_text(m) for m in msgs if int(m.get("sender_uid") or 0) != self.bili.self_uid]
+            texts = [t for t in texts if t]
+            try:
+                text = await self.llm.make_dm_reply(texts, user_name=f"UID{talker}")
+            except LLMError as exc:
+                log.error("生成私信回复失败：%s", exc)
+                self.store.add_error()
+                continue
+
+            log.info("生成私信回复｜UID%s → %s", talker, text)
+            if self.cfg.dry_run:
+                log.info("[演练] 私信不发送")
+                continue
+
+            if not await human_delay(self.cfg, self._stop, log.info, "发私信"):
+                return
+            try:
+                await self.bili.send_dm(talker, text)
+            except ApiException as exc:
+                self._handle_api_error(exc, f"回复私信 UID{talker}")
+                if self.fatal_reason:
+                    return
+                continue
+            except Exception as exc:
+                log.error("发私信给 UID%s 失败：%s", talker, exc)
+                self.store.add_error()
+                continue
+
+            self.store.mark_replied(key, text, target=f"UID{talker}")
+            self.store.add_dm()   # 私信单独计数，不占评论额度
+            self.store.save()
+            log.info("✅ 已回私信 UID%s 今日私信 %d/%d", talker, self.store.dm_today(), self.cfg.dm_daily_limit)
             self._status("运行中")
 
     # ------------------------------------------------------------------

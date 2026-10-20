@@ -35,6 +35,7 @@ from platform_utils import (
 from risk import describe
 from runner import Runner
 from storage import StateStore
+import themes as theme_mod
 
 log = logging.getLogger(__name__)
 
@@ -314,16 +315,18 @@ class App(tk.Tk):
     # 构建界面
     # ------------------------------------------------------------------
     def _build(self):
-        self.configure(bg=HEADER_BG)
+        self._theme = theme_mod.get(self.cfg.theme)
+        self.configure(bg=self._theme["bg"])
 
-        header = tk.Canvas(self, height=120, highlightthickness=0, bg="#D6ECF7", bd=0)
+        header = tk.Canvas(self, height=120, highlightthickness=0, bg=self._theme["bg"], bd=0)
         header.pack(fill="x")
 
         self._header_img: Optional[tk.PhotoImage] = None
+        self._header_img_id = None
         try:
-            self._header_img = tk.PhotoImage(file=str(resource_path("assets/header_bg.png")))
-            img_id = header.create_image(0, 0, anchor="ne", image=self._header_img)
-            header.bind("<Configure>", lambda e: header.coords(img_id, e.width, 0))
+            self._header_img = tk.PhotoImage(file=str(resource_path(self._theme["header"])))
+            self._header_img_id = header.create_image(0, 0, anchor="ne", image=self._header_img)
+            header.bind("<Configure>", lambda e: header.coords(self._header_img_id, e.width, 0))
         except Exception:
             log.warning("头部背景没加载出来，用纯色顶着", exc_info=True)
 
@@ -334,26 +337,31 @@ class App(tk.Tk):
         except Exception:
             pass
 
-        header.create_text(128, 38, anchor="w", text="大肥鱼", font=FONT_TITLE, fill="#173B57")
-        header.create_text(130, 70, anchor="w", text="B站 AI 自动评论 · 会自己刷视频的鱼",
-                           font=FONT, fill="#4D7390")
-        header.create_text(130, 94, anchor="w", text=WATERMARK,
-                           font=FONT_SMALL, fill="#7C9AB3")
+        self._title_id = header.create_text(128, 38, anchor="w", text="大肥鱼",
+                                            font=FONT_TITLE, fill=self._theme["title"])
+        self._sub_id = header.create_text(130, 70, anchor="w",
+                                          text="B站 AI 自动评论 · 会自己刷视频的鱼",
+                                          font=FONT, fill=self._theme["sub"])
+        self._mark_id = header.create_text(130, 94, anchor="w", text=WATERMARK,
+                                           font=FONT_SMALL, fill=self._theme["mark"])
         self.header = header
 
         # 笔记本 + 右侧立绘（窗口够宽才显示）
-        shell = tk.Frame(self, bg=HEADER_BG)
+        shell = tk.Frame(self, bg=self._theme["shell"])
+        self.shell = shell
         shell.grid_rowconfigure(0, weight=1)
         shell.grid_columnconfigure(0, weight=1)
 
         self.nb = ttk.Notebook(shell)
         self.nb.grid(row=0, column=0, sticky="nsew", padx=(12, 6), pady=(2, 6))
 
-        self.art_frame = tk.Frame(shell, bg=HEADER_BG)
+        self.art_frame = tk.Frame(shell, bg=self._theme["shell"])
         self._panel_img: Optional[tk.PhotoImage] = None
         try:
-            self._panel_img = tk.PhotoImage(file=str(resource_path("assets/panel.png")))
-            tk.Label(self.art_frame, image=self._panel_img, bg=HEADER_BG, bd=0).pack()
+            self._panel_img = tk.PhotoImage(file=str(resource_path(self._theme["panel"])))
+            self._panel_label = tk.Label(self.art_frame, image=self._panel_img,
+                                         bg=self._theme["shell"], bd=0)
+            self._panel_label.pack()
         except Exception:
             log.warning("立绘面板没加载出来", exc_info=True)
         self.art_frame.grid(row=0, column=1, sticky="n", padx=(0, 12), pady=(8, 0))
@@ -385,7 +393,8 @@ class App(tk.Tk):
         ttk.Button(bar, text="数据目录", command=self._open_data_dir).pack(side="left", padx=(6, 0))
 
         self.status_var = tk.StringVar()
-        ttk.Label(bar, textvariable=self.status_var, foreground="#5A7A92").pack(side="left", padx=16)
+        self._status_label = ttk.Label(bar, textvariable=self.status_var, foreground=self._theme["status"])
+        self._status_label.pack(side="left", padx=16)
 
         self.btn_stop = ttk.Button(bar, text="停止", command=self._on_stop, state="disabled")
         self.btn_stop.pack(side="right")
@@ -578,14 +587,22 @@ class App(tk.Tk):
         ttk.Label(row2, text="只回复最近（天）").pack(side="left")
         ttk.Entry(row2, textvariable=var("reply_max_age_days"), width=5).pack(side="left", padx=6)
 
-        ttk.Label(row2, text="主人 UID").pack(side="left", padx=(20, 4))
+        ttk.Label(row2, text="私信/天").pack(side="left", padx=(18, 4))
+        ttk.Entry(row2, textvariable=var("dm_daily_limit"), width=5).pack(side="left")
+
+        ttk.Label(row2, text="主人 UID").pack(side="left", padx=(18, 4))
         ttk.Entry(row2, textvariable=var("master_uid"), width=14).pack(side="left")
-        ttk.Label(
-            row2,
-            text="可不填；有人问「你主人是谁」就会 @ 他",
-            foreground="#999",
-            font=FONT_SMALL,
-        ).pack(side="left", padx=6)
+
+        ttk.Label(row2, text="主题").pack(side="left", padx=(18, 4))
+        self.theme_var = tk.StringVar(value=theme_mod.LABELS.get(self.cfg.theme, "海盐蓝"))
+        self.v["theme"] = self.theme_var
+        theme_box = ttk.Combobox(
+            row2, textvariable=self.theme_var, values=list(theme_mod.LABELS.values()),
+            state="readonly", width=8,
+        )
+        theme_box.pack(side="left")
+        theme_box.bind("<<ComboboxSelected>>", lambda e: self._apply_theme(
+            theme_mod.LABEL_TO_KEY.get(self.theme_var.get(), "blue")))
 
         checks = ttk.Frame(box3)
         checks.grid(row=3, column=0, columnspan=6, sticky="w", pady=(8, 0))
@@ -593,6 +610,7 @@ class App(tk.Tk):
         ttk.Checkbutton(checks, text="回复 @ 和评论", variable=bvar("reply_enabled")).pack(side="left", padx=12)
         ttk.Checkbutton(checks, text="参考热评", variable=bvar("use_hot_comments")).pack(side="left", padx=12)
         ttk.Checkbutton(checks, text="参考字幕", variable=bvar("use_subtitle")).pack(side="left", padx=12)
+        ttk.Checkbutton(checks, text="回复私信", variable=bvar("reply_dm_enabled")).pack(side="left", padx=12)
         ttk.Checkbutton(checks, text="演练模式（只生成不发送）", variable=bvar("dry_run")).pack(side="left", padx=12)
         ttk.Checkbutton(checks, text="循环运行", variable=bvar("loop_enabled")).pack(side="left", padx=12)
 
@@ -604,8 +622,9 @@ class App(tk.Tk):
             foreground="#666",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        parent.rowconfigure(1, weight=1)
-        parent.rowconfigure(3, weight=1)
+        parent.rowconfigure(1, weight=2)
+        parent.rowconfigure(3, weight=2)
+        parent.rowconfigure(5, weight=1)
         parent.columnconfigure(0, weight=1)
 
         ttk.Label(parent, text="评论 System Prompt", font=FONT_BIG).grid(row=0, column=0, sticky="w")
@@ -630,7 +649,20 @@ class App(tk.Tk):
         s2.pack(side="right", fill="y")
         self.reply_text = t2
 
-        ttk.Button(parent, text="恢复默认提示词", command=self._reset_prompts).grid(row=4, column=0, sticky="w")
+        ttk.Label(parent, text="评论预设（可选，一行一条，只给 AI 当参考，不会照抄）", font=FONT_BIG).grid(
+            row=4, column=0, sticky="w", pady=(6, 0)
+        )
+        f3 = ttk.Frame(parent)
+        f3.grid(row=5, column=0, sticky="nsew", pady=(4, 8))
+        t3 = tk.Text(f3, wrap="word", height=4, font=FONT, undo=True)
+        t3.insert("1.0", self.cfg.comment_presets)
+        s3 = ttk.Scrollbar(f3, orient="vertical", command=t3.yview)
+        t3.configure(yscrollcommand=s3.set)
+        t3.pack(side="left", fill="both", expand=True)
+        s3.pack(side="right", fill="y")
+        self.presets_text = t3
+
+        ttk.Button(parent, text="恢复默认提示词", command=self._reset_prompts).grid(row=6, column=0, sticky="w")
 
     # ------------------------------------------------------------------
     def _build_log(self, parent):
@@ -741,14 +773,38 @@ class App(tk.Tk):
         cfg.reply_enabled = bool(self.v["reply_enabled"].get())
         cfg.use_hot_comments = bool(self.v["use_hot_comments"].get())
         cfg.use_subtitle = bool(self.v["use_subtitle"].get())
+        cfg.reply_dm_enabled = bool(self.v["reply_dm_enabled"].get())
         cfg.dry_run = bool(self.v["dry_run"].get())
         cfg.loop_enabled = bool(self.v["loop_enabled"].get())
 
         cfg.system_prompt = self.system_text.get("1.0", "end").strip() or cfg.system_prompt
         cfg.reply_prompt = self.reply_text.get("1.0", "end").strip() or cfg.reply_prompt
+        cfg.comment_presets = self.presets_text.get("1.0", "end").strip()
+        cfg.theme = theme_mod.LABEL_TO_KEY.get(str(self.theme_var.get()).strip(), "blue")
 
         errors.extend(cfg.validate())
         return cfg, errors
+
+    # ------------------------------------------------------------------
+    def _apply_theme(self, key: str) -> None:
+        """换主题：背景、头部配色、立绘都跟着变，立即生效。"""
+        t = theme_mod.get(key)
+        self._theme = t
+        try:
+            self.configure(bg=t["bg"])
+            self.header.configure(bg=t["bg"])
+            self.header.itemconfigure(self._title_id, fill=t["title"])
+            self.header.itemconfigure(self._sub_id, fill=t["sub"])
+            self.header.itemconfigure(self._mark_id, fill=t["mark"])
+            self.shell.configure(bg=t["shell"])
+            self.art_frame.configure(bg=t["shell"])
+            self._status_label.configure(foreground=t["status"])
+            self._header_img = tk.PhotoImage(file=str(resource_path(t["header"])))
+            self.header.itemconfigure(self._header_img_id, image=self._header_img)
+            self._panel_img = tk.PhotoImage(file=str(resource_path(t["panel"])))
+            self._panel_label.configure(image=self._panel_img, bg=t["shell"])
+        except Exception:
+            log.warning("切换主题失败", exc_info=True)
 
     # ------------------------------------------------------------------
     def _on_qr_login(self):
@@ -1091,7 +1147,9 @@ HELP_TEXT = """\
 • 每日上限：评论 + 回复共用。新手建议 5~10，稳定几天再往上加。
 • 延迟下限/上限：每个动作前随机等这么久。建议 15~45 秒，别低于 5 秒。
 • 每轮看几个视频：一轮从视频列表里挑几个视频处理，默认 15。
-• 每轮最多回复：防止一次回太多被判定刷屏，默认 5。
+• 每轮最多回复：0 = 不限（陌生人的追评都会回），填数字才限制。
+• 评论间隔 / 消息间隔：两条线分开——评论按「循环间隔」，消息按「消息间隔」查。
+  这样评论轮很长的时候，也会插空去看有没有人回复你。
 • 视频来源：首页推荐（跟你的账号口味）/ 热门榜 / 排行榜 / 搜索关键词 / 混合（每轮换一个）。
 • 搜索关键词：视频来源选「搜索关键词」时用它搜；空着就退回首页推荐。混合模式下填了关键词，也有机会抽到搜索。
 • 只回复最近（天）：消息中心里超过这个天数的旧消息就不回了，默认 3 天，0 表示不限。
@@ -1148,6 +1206,20 @@ HELP_TEXT = """\
 • 评过会写进去重记录，同一条不会评第二次；
 • 开着「演练模式」时只生成、不发送；
 • 机器人正在跑的时候不能一键评论，先点「停止」。
+
+【评论预设】
+
+「人设提示词」页最下面有个「评论预设」，一行一条。AI 会学它们的语气和句式，不会照抄。
+比如写：
+
+@主人 主人这个视频是啥啥啥
+
+如果你配了主人 UID，发出去时会自动把 @主人 换成真实的 @昵称（带提醒）。
+
+【主题】
+
+「运行参数」右下角的「主题」可以换 4 套配色：海盐蓝 / 樱花粉 / 薄荷绿 / 暖沙，
+每套配一张不同的立绘，保存后重启也记得。
 
 【关窗不会退出】
 

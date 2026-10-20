@@ -63,7 +63,8 @@ class LLMClient:
         self,
         info: "VideoInfo",
         hot_comments: list[str] | None = None,
-        subtitle: str = "",
+        subtitle: str | None = "",
+        presets: list[str] | None = None,
     ) -> str:
         lines = [
             f"视频标题：{info.title or '（无）'}",
@@ -80,6 +81,10 @@ class LLMClient:
             lines.append("")
             lines.append("字幕片段（自动生成，可能有错字，只用来理解内容）：")
             lines.append(subtitle[:600])
+        if presets:
+            lines.append("")
+            lines.append("预设评论（学它们的语气和句式，挑一条的路子来写，别照抄；不要逐字复读）：")
+            lines.extend(f"- {p[:80]}" for p in presets[:8])
         lines.append("")
         lines.append("给这个视频写一条评论吧。")
         prompt = "\n".join(lines)
@@ -107,6 +112,25 @@ class LLMClient:
         text = clean_text(raw, REPLY_LIMIT)
         if not text:
             log.warning("模型返回空回复，使用兜底文案")
+            text = _pick(_FALLBACK_REPLIES)
+        return text
+
+    async def make_dm_reply(self, texts: list[str], user_name: str = "") -> str:
+        """回复 B站私信。"""
+        lines = []
+        if user_name:
+            lines.append(f"对方昵称：{user_name}")
+        lines.append("对方最近的私信：")
+        for t in texts[-3:]:
+            if t:
+                lines.append(f"- {t[:120]}")
+        if not lines or len(lines) == 0:
+            lines.append("（没拿到内容，就随口接一句）")
+        lines.append("回他一句私信吧。")
+        raw = await self._chat(self.cfg.dm_prompt, "\n".join(lines))
+        text = clean_text(raw, REPLY_LIMIT)
+        if not text:
+            log.warning("模型返回空私信回复，使用兜底文案")
             text = _pick(_FALLBACK_REPLIES)
         return text
 
