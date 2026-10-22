@@ -23,7 +23,7 @@
 
 不用装 Python，直接下打包好的版本：
 
-**[⬇️ 前往 Releases 下载](https://github.com/Eule-Lawrence/1111111111111111111111111111111/releases/latest)**
+**[⬇️ 前往 Releases 下载](https://github.com/Eule-Lawrence/BiliFish/releases/latest)**
 
 | 系统 | 文件 | 说明 |
 |---|---|---|
