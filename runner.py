@@ -187,6 +187,22 @@ class Runner:
     def _slang(self) -> str:
         return (getattr(self.cfg, "slang_notes", "") or "").strip()
 
+    def _slang_for(self, text: str) -> str:
+        """只把「对方真的用了」的梗给模型，别自己乱用。"""
+        raw = self._slang()
+        t = (text or "").strip()
+        if not raw or not t:
+            return ""
+        hits = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            term = line.split("=", 1)[0].strip() if "=" in line else line
+            if term and term in t:
+                hits.append(line)
+        return "\n".join(hits)
+
     def _presets(self) -> list[str]:
         raw = (getattr(self.cfg, "comment_presets", "") or "").strip()
         return [line.strip() for line in raw.splitlines() if line.strip()][:8]
@@ -232,8 +248,7 @@ class Runner:
                 log.debug("拉取字幕失败：%s", exc)
 
         text = await self.llm.make_comment(
-            info, hot_comments=hot, subtitle=subtitle,
-            presets=self._presets(), slang=self._slang()
+            info, hot_comments=hot, subtitle=subtitle, presets=self._presets()
         )
         text, mention = self._apply_master_mention(text)
         log.info(
@@ -366,8 +381,7 @@ class Runner:
             # 3) 生成评论
             try:
                 text = await self.llm.make_comment(
-                    info, hot_comments=hot, subtitle=subtitle,
-                    presets=self._presets(), slang=self._slang()
+                    info, hot_comments=hot, subtitle=subtitle, presets=self._presets()
                 )
                 text, mention = self._apply_master_mention(text)
             except LLMError as exc:
@@ -464,6 +478,9 @@ class Runner:
                 continue  # 自己发的，别自问自答
             if self.store.is_replied(it.key):
                 continue
+            if self.store.failure_count(it.key) >= int(self.cfg.fail_stop_after):
+                log.debug("消息 %s 已连续失败 %d 次，放弃", it.key, self.store.failure_count(it.key))
+                continue
             if cutoff and it.ts and it.ts < cutoff:
                 expired += 1
                 continue
@@ -514,6 +531,11 @@ class Runner:
                 return
 
             is_master = bool(master_uid) and it.user_mid == master_uid
+            per_user = int(getattr(self.cfg, "max_replies_per_user", 0) or 0)
+            if per_user > 0 and not is_master and self.store.user_replies_today(it.user_mid) >= per_user:
+                log.info("今天已经回过 %s %d 次，先不回了", it.user_name or it.user_mid, per_user)
+                continue
+
             hint = ""
             mention = None
             if _claims_master(it.text) and not is_master:
@@ -530,7 +552,7 @@ class Runner:
 
             try:
                 text = await self.llm.make_reply(
-                    it, is_master=is_master, extra_hint=hint, slang=self._slang()
+                    it, is_master=is_master, extra_hint=hint, slang=self._slang_for(it.text)
                 )
             except LLMError as exc:
                 log.error("生成回复失败：%s", exc)
@@ -559,6 +581,7 @@ class Runner:
             try:
                 res = await self.bili.reply(it, text, mention=mention)
             except ApiException as exc:
+                self.store.note_failure(it.key)
                 self._handle_api_error(exc, f"回复 {it.key}")
                 if self.fatal_reason:
                     return
@@ -566,9 +589,12 @@ class Runner:
                 continue
             except Exception as exc:
                 log.error("回复 %s 失败：%s", it.key, exc)
+                self.store.note_failure(it.key)
                 self.store.add_error()
                 continue
 
+            self.store.clear_failure(it.key)
+            self.store.bump_user_reply(it.user_mid)
             self.store.mark_replied(it.key, text, target=who)
             self.store.add_count()
             self.store.save()
@@ -605,6 +631,8 @@ class Runner:
             key = f"dm:{talker}:{last.get('msg_key') or last.get('timestamp')}"
             if self.store.is_replied(key):
                 continue
+            if self.store.failure_count(key) >= int(self.cfg.fail_stop_after):
+                continue
             pending.append((talker, last, key))
 
         if not pending:
@@ -636,9 +664,12 @@ class Runner:
             texts = [dm_text(m) for m in msgs if int(m.get("sender_uid") or 0) != self.bili.self_uid]
             texts = [t for t in texts if t]
             try:
-                text = await self.llm.make_dm_reply(texts, user_name=f"UID{talker}", slang=self._slang())
+                text = await self.llm.make_dm_reply(
+                    texts, user_name=f"UID{talker}", slang=self._slang_for(" ".join(texts))
+                )
             except LLMError as exc:
                 log.error("生成私信回复失败：%s", exc)
+                self.store.note_failure(key)
                 self.store.add_error()
                 continue
 
@@ -652,15 +683,18 @@ class Runner:
             try:
                 await self.bili.send_dm(talker, text)
             except ApiException as exc:
+                self.store.note_failure(key)
                 self._handle_api_error(exc, f"回复私信 UID{talker}")
                 if self.fatal_reason:
                     return
                 continue
             except Exception as exc:
                 log.error("发私信给 UID%s 失败：%s", talker, exc)
+                self.store.note_failure(key)
                 self.store.add_error()
                 continue
 
+            self.store.clear_failure(key)
             self.store.mark_replied(key, text, target=f"UID{talker}")
             self.store.add_dm()   # 私信单独计数，不占评论额度
             self.store.save()

@@ -556,6 +556,7 @@ class App(tk.Tk):
         num(0, 2, "每轮最多回复", "max_replies_per_round")
         num(0, 3, "评论间隔（分钟）", "loop_interval_min")
         num(0, 4, "消息间隔（分钟）", "reply_interval_min")
+        num(0, 5, "每人/天回复", "max_replies_per_user")
 
         num(1, 0, "延迟下限（秒）", "delay_min")
         num(1, 1, "延迟上限（秒）", "delay_max", hint="建议 15~45，别低于 5")
@@ -787,6 +788,7 @@ class App(tk.Tk):
         cfg.delay_max = as_int("delay_max", "延迟上限", cfg.delay_max)
         cfg.loop_interval_min = as_int("loop_interval_min", "评论间隔", cfg.loop_interval_min)
         cfg.reply_interval_min = as_int("reply_interval_min", "消息间隔", cfg.reply_interval_min)
+        cfg.max_replies_per_user = as_int("max_replies_per_user", "每人每天回复数", cfg.max_replies_per_user)
         cfg.dm_daily_limit = as_int("dm_daily_limit", "私信每日上限", cfg.dm_daily_limit)
         cfg.dm_interval_sec = as_int("dm_interval_sec", "私信检查间隔", cfg.dm_interval_sec)
 
@@ -1170,6 +1172,8 @@ HELP_TEXT = """\
 • 延迟下限/上限：每个动作前随机等这么久。建议 15~45 秒，别低于 5 秒。
 • 每轮看几个视频：一轮从视频列表里挑几个视频处理，默认 15。
 • 每轮最多回复：0 = 不限（陌生人的追评都会回），填数字才限制。
+• 每人/天回复：同一个人一天最多回几次（0 = 不限），防止两个人聊个没完。
+• 同一条消息连续失败 3 次（比如对方把你拉黑了）就不再尝试。
 • 评论间隔 / 消息间隔：两条线分开——评论按「循环间隔」，消息按「消息间隔」查。
   这样评论轮很长的时候，也会插空去看有没有人回复你。
 • 视频来源：首页推荐（跟你的账号口味）/ 热门榜 / 排行榜 / 搜索关键词 / 混合（每轮换一个）。

@@ -17,7 +17,7 @@ from typing import Any
 
 APP_NAME = "BiliFish"
 APP_TITLE = "大肥鱼 · B站 AI 自动评论"
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 # ---------------------------------------------------------------------------
 # 默认提示词（界面上可以改，改完保存在 config.json 里）
@@ -156,6 +156,8 @@ class Config:
     video_source: str = "recommend"  # recommend / popular / rank / search / mix
     search_keyword: str = ""        # 视频来源=搜索时用的关键词；空 = 退回首页推荐
     max_replies_per_round: int = 0  # 每轮最多回几条消息，0 = 不限（陌生人的追评都会回）
+    max_replies_per_user: int = 3   # 同一个人每天最多回几次，0 = 不限
+    fail_stop_after: int = 3        # 同一条消息连续失败几次就放弃
     reply_max_age_days: int = 3     # 只回复最近几天的消息，0 = 不限
     use_hot_comments: bool = True   # 生成评论前参考这个视频的热评
     use_subtitle: bool = False      # 生成评论前参考 CC 字幕（命中率低，多一次请求）
@@ -229,6 +231,10 @@ class Config:
             errors.append("每轮视频数要在 1 ~ 50 之间")
         if not 0 <= self.max_replies_per_round <= 200:
             errors.append("每轮回复数要在 0 ~ 200 之间（0 = 不限）")
+        if not 0 <= self.max_replies_per_user <= 50:
+            errors.append("每人每天回复数要在 0 ~ 50 之间（0 = 不限）")
+        if not 1 <= self.fail_stop_after <= 20:
+            errors.append("失败放弃次数要在 1 ~ 20 之间")
         if not 1 <= self.dm_daily_limit <= 200:
             errors.append("私信每日上限要在 1 ~ 200 之间")
         if not 15 <= self.dm_interval_sec <= 3600:

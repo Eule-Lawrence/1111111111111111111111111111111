@@ -55,6 +55,8 @@ class StateStore:
                 "replied": data.get("replied") or {},
                 "daily": data.get("daily") or {},
                 "daily_dm": data.get("daily_dm") or {},
+                "failed": data.get("failed") or {},
+                "user_replies": data.get("user_replies") or {},
                 "totals": data.get("totals") or {"comments": 0, "replies": 0, "errors": 0},
             }
             return self
@@ -126,6 +128,38 @@ class StateStore:
             daily_dm = self.state.setdefault("daily_dm", {})
             daily_dm[day] = int(daily_dm.get(day, 0)) + 1
             return daily_dm[day]
+
+    # ---- 失败计数：同一条消息连续失败几次就不碰了 ----
+    def failure_count(self, key: str) -> int:
+        with self._lock:
+            return int(self.state.get("failed", {}).get(key, 0))
+
+    def note_failure(self, key: str) -> int:
+        with self._lock:
+            failed = self.state.setdefault("failed", {})
+            failed[key] = int(failed.get(key, 0)) + 1
+            return failed[key]
+
+    def clear_failure(self, key: str) -> None:
+        with self._lock:
+            self.state.get("failed", {}).pop(key, None)
+
+    # ---- 每人每天回复次数 ----
+    def user_replies_today(self, uid: int) -> int:
+        with self._lock:
+            rec = self.state.get("user_replies", {}).get(str(uid)) or {}
+            return int(rec.get("count", 0)) if rec.get("date") == _today() else 0
+
+    def bump_user_reply(self, uid: int) -> int:
+        with self._lock:
+            bucket = self.state.setdefault("user_replies", {})
+            key = str(uid)
+            rec = bucket.get(key) or {}
+            if rec.get("date") != _today():
+                rec = {"date": _today(), "count": 0}
+            rec["count"] = int(rec.get("count", 0)) + 1
+            bucket[key] = rec
+            return rec["count"]
 
     def add_error(self) -> None:
         with self._lock:

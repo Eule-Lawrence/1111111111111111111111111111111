@@ -125,7 +125,7 @@ class LLMClient:
         if extra_hint:
             lines.append(extra_hint)
         if slang.strip():
-            lines.append("可以用这些口语/网络用语（理解意思再自然使用，别硬塞、别用错）：")
+            lines.append("对方上面用了这些词，你可以顺着用；对方没用的不要自己造，也别硬塞：")
             lines.append(slang.strip()[:500])
         lines.append("回他一句吧。")
         raw = await self._chat(self.cfg.reply_prompt, "\n".join(lines))
@@ -147,7 +147,7 @@ class LLMClient:
         if not lines or len(lines) == 0:
             lines.append("（没拿到内容，就随口接一句）")
         if slang.strip():
-            lines.append("可以用这些口语/网络用语（理解意思再自然使用，别硬塞）：")
+            lines.append("对方用了这些词，可以顺着用；对方没用的别自己造：")
             lines.append(slang.strip()[:400])
         lines.append("回他一句私信吧。")
         raw = await self._chat(self.cfg.dm_prompt, "\n".join(lines))
